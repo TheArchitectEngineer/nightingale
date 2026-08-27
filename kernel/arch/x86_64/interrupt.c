@@ -53,13 +53,6 @@ enum idt_gate_flags {
 };
 
 uint64_t idt[512] = {};
-struct __PACKED {
-	uint16_t len;
-	void *ptr;
-} idt_ptr = {
-	sizeof(idt) - 1,
-	idt,
-};
 
 void register_idt_gate(int index, void (*handler)(), int opts, int ist) {
 	// TODO put these in a header
@@ -420,5 +413,13 @@ void idt_install() {
 }
 
 void idt_load() {
+	struct __PACKED {
+		uint16_t len;
+		void *ptr;
+	} idt_ptr = {
+		sizeof(idt) - 1,
+		idt,
+	};
+
 	asm volatile("lidt %0" : : "m"(idt_ptr));
 }
