@@ -57,9 +57,7 @@ const char *thread_states[] = {
 	[TS_STARTED] = "TS_STARTED",
 	[TS_RUNNING] = "TS_RUNNING",
 	[TS_BLOCKED] = "TS_BLOCKED",
-	[TS_WAIT] = "TS_WAIT",
 	[TS_IOWAIT] = "TS_IOWAIT",
-	[TS_TRWAIT] = "TS_TRWAIT",
 	[TS_SLEEP] = "TS_SLEEP",
 	[TS_DEAD] = "TS_DEAD",
 };
@@ -358,7 +356,6 @@ struct thread *new_thread() {
 	memset(th, 0, sizeof(struct thread));
 	th->state = TS_PREINIT;
 
-	list_init(&th->tracees);
 	list_init(&th->process_threads);
 	list_append(&all_threads, &th->all_threads);
 
@@ -397,7 +394,11 @@ struct process *new_process(struct thread *th) {
 	memset(proc, 0, sizeof(struct process));
 	proc->magic = PROC_MAGIC;
 
+	spin_init(&proc->wait_lock);
+	wq_init(&proc->wait_wq);
+
 	list_init(&proc->children);
+	list_init(&proc->tracees);
 	list_init(&proc->threads);
 
 	proc->root = global_root_dentry;
@@ -547,13 +548,9 @@ void make_freeable(struct thread *defunct) {
 	}
 }
 
-void do_process_exit(int exit_status) {
-	if (running_process->pid == 1)
-		panic("attempted to kill init!");
-	assert(list_empty(&running_process->threads));
-	running_process->exit_status = exit_status + 1;
-
+void reparent_children_to_init() {
 	struct process *init = process_by_id(1);
+
 	if (!list_empty(&running_process->children)) {
 		list_for_each (&running_process->children) {
 			struct process *child = container_of(struct process, siblings, it);
@@ -561,6 +558,16 @@ void do_process_exit(int exit_status) {
 		}
 		list_concat(&init->children, &running_process->children);
 	}
+}
+
+void do_process_exit(int exit_status) {
+	if (running_process->pid == 1)
+		panic("attempted to kill init!");
+
+	assert(list_empty(&running_process->threads));
+	running_process->exit_status = exit_status + 1;
+
+	reparent_children_to_init();
 
 	wake_waiting_parent_thread();
 }
@@ -655,8 +662,6 @@ void kill_pid(pid_t pid) {
 bool enqueue_checks(struct thread *th) {
 	if (th->tid == 0)
 		return false;
-	// if (th->trace_state == TRACE_STOPPED)  return false;
-	// I hope the above is covered by TRWAIT, but we'll see
 	if (th->queued)
 		return false;
 	assert(th->proc->pid > -1);
@@ -872,29 +877,15 @@ void thread_timer(void *) {
 }
 
 void wake_waiting_parent_thread() {
-	if (running_process->pid == 0)
-		return;
-	struct process *parent = running_process->parent;
-	list_for_each (&parent->threads) {
-		struct thread *parent_th
-			= container_of(struct thread, process_threads, it);
-		if (parent_th->state != TS_WAIT)
-			continue;
-		if (process_matches(parent_th->wait_request, running_process)) {
-			parent_th->wait_result = running_process;
-			parent_th->state = TS_RUNNING;
-			signal_send_th(parent_th, SIGCHLD);
-			return;
-		}
-	}
+	struct process *pp = running_process->parent;
 
-	// no one is listening, signal the tg leader
-	struct thread *parent_th = process_thread(parent);
-	signal_send_th(parent_th, SIGCHLD);
+	spin_lock(&pp->wait_lock);
+	wq_wake_all_locked(&pp->wait_wq);
+	spin_unlock(&pp->wait_lock);
+
+	signal_send_proc(pp, SIGCHLD);
 }
 
-// If it finds a child process to destroy, find_dead_child returns with
-// interrupts disabled. destroy_child_process will re-enable them.
 struct process *find_dead_child(pid_t query) {
 	if (list_empty(&running_process->children))
 		return nullptr;
@@ -909,30 +900,16 @@ struct process *find_dead_child(pid_t query) {
 }
 
 struct thread *find_waiting_tracee(pid_t query) {
-	if (list_empty(&running_addr()->tracees))
+	if (list_empty(&running_process->tracees))
 		return nullptr;
-	list_for_each (&running_addr()->tracees) {
+	list_for_each (&running_process->tracees) {
 		struct thread *th = container_of(struct thread, trace_node, it);
 		if (query != 0 && query != th->tid)
 			continue;
-		if (th->state == TS_TRWAIT)
+		if (trace_is_stopped(th))
 			return th;
 	}
 	return nullptr;
-}
-
-void wait_for(pid_t pid) {
-	running_thread->state = TS_WAIT;
-	running_thread->wait_request = pid;
-	running_thread->wait_result = nullptr;
-	running_thread->wait_trace_result = nullptr;
-}
-
-void clear_wait() {
-	running_thread->wait_request = 0;
-	running_thread->wait_result = 0;
-	running_thread->wait_trace_result = nullptr;
-	running_thread->state = TS_RUNNING;
 }
 
 sysret sys_waitpid(pid_t pid, int *status, enum wait_options options) {
@@ -941,12 +918,33 @@ sysret sys_waitpid(pid_t pid, int *status, enum wait_options options) {
 	int exit_code;
 	int found_pid;
 
-	wait_for(pid);
+	struct process *child = nullptr;
+	struct thread *tracee = nullptr;
 
-	struct process *child = find_dead_child(pid);
+	if (list_empty(&running_process->children)
+		&& list_empty(&running_process->tracees)) {
+		return -ECHILD;
+	}
+
+	spin_lock(&running_process->wait_lock);
+
+	while (true) {
+		if ((child = find_dead_child(pid)))
+			break;
+		if ((tracee = find_waiting_tracee(pid)))
+			break;
+
+		if (options & WNOHANG) {
+			spin_unlock(&running_process->wait_lock);
+			return 0;
+		}
+
+		wq_wait(&running_process->wait_wq, &running_process->wait_lock);
+	}
+
+	spin_unlock(&running_process->wait_lock);
+
 	if (child) {
-		clear_wait();
-
 		exit_code = child->exit_status - 1;
 		found_pid = child->pid;
 		destroy_child_process(child);
@@ -956,53 +954,13 @@ sysret sys_waitpid(pid_t pid, int *status, enum wait_options options) {
 		return found_pid;
 	}
 
-	struct thread *trace_th = find_waiting_tracee(pid);
-	if (trace_th) {
-		clear_wait();
-
+	if (tracee) {
 		if (status)
-			*status = trace_th->trace_report;
-		return trace_th->tid;
+			*status = tracee->trace_report;
+		return tracee->tid;
 	}
 
-	if (list_empty(&running_process->children)
-		&& list_empty(&running_addr()->tracees)) {
-		clear_wait();
-		return -ECHILD;
-	}
-
-	if (options & WNOHANG)
-		return 0;
-
-	if (running_thread->state == TS_WAIT) {
-		thread_block();
-		// rescheduled when a wait() comes in
-		// see wake_waiting_parent_thread();
-		// and trace_wake_tracer_with();
-	}
-	if (running_thread->state == TS_WAIT)
-		return -EINTR;
-
-	struct process *p = running_thread->wait_result;
-	struct thread *t = running_thread->wait_trace_result;
-	clear_wait();
-
-	if (p) {
-		exit_code = p->exit_status - 1;
-		found_pid = p->pid;
-		destroy_child_process(p);
-
-		if (status)
-			*status = exit_code;
-		return found_pid;
-	}
-	if (t) {
-		if (status)
-			*status = t->trace_report;
-		return t->tid;
-	}
-	return -EINTR;
-	UNREACHABLE();
+	unreachable();
 }
 
 void sched_wake(struct thread *th) {
@@ -1014,7 +972,32 @@ void sched_wake(struct thread *th) {
 	thread_enqueue(th);
 }
 
+// find a thread that we can enqueue for the purposes of running a signal
+// handler
+void sched_notify_proc(struct process *p) {
+	list_for_each (&p->threads) {
+		struct thread *th = container_of(struct thread, process_threads, it);
+		if (th->state == TS_RUNNING) {
+			continue;
+		}
+		sched_notify(th);
+		return;
+	}
+	sched_notify(process_thread(p));
+}
+
+void sched_notify(struct thread *th) {
+	if (th->state == TS_RUNNING)
+		return;
+	thread_enqueue(th);
+}
+
 void sched_block() {
 	running_thread->state = TS_BLOCKED;
 	thread_block();
+}
+
+void sched_yield() {
+	struct thread *next = thread_sched();
+	thread_switch_no_save(next);
 }

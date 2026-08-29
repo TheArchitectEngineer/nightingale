@@ -7,6 +7,8 @@
 BEGIN_DECLS
 
 enum trace_state {
+	TRACE_INVALID,
+
 	TRACE_RUNNING,
 
 	TRACE_SYSCALL,
@@ -25,5 +27,7 @@ void trace_syscall_entry(struct thread *tracee, int syscall);
 void trace_syscall_exit(struct thread *tracee, int syscall);
 int trace_signal_delivery(int signal, sighandler_t);
 void trace_report_trap(int interrupt);
+
+bool trace_is_stopped(struct thread *);
 
 END_DECLS

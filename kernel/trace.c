@@ -6,32 +6,34 @@
 
 static void wake_tracer_with(struct thread *tracee, int value);
 
-static bool is_stopped(struct thread *th) {
-	return th->state == TS_TRWAIT;
+bool trace_is_stopped(struct thread *th) {
+	return (th->trace_state == TRACE_SYSCALL_ENTER_STOP
+		|| th->trace_state == TRACE_SYSCALL_EXIT_STOP
+		|| th->trace_state == TRACE_SIGNAL_DELIVERY_STOP
+		|| th->trace_state == TRACE_TRAPPED);
 }
 
 static sysret trace_traceme() {
 	struct process *parent = running_process->parent;
-	struct thread *parent_th = process_thread(parent);
 	running_thread->trace_state = TRACE_RUNNING;
-	running_thread->tracer = parent_th;
-	list_append(&parent_th->tracees, &running_addr()->trace_node);
+	running_thread->tracer = parent;
+	list_append(&parent->tracees, &running_addr()->trace_node);
 	return 0;
 }
 
 static sysret trace_attach(struct thread *th) {
 	if (!th)
 		return -ESRCH;
-	th->tracer = running_addr();
+	th->tracer = running_process;
 	th->trace_state = TRACE_RUNNING;
-	list_append(&running_addr()->tracees, &th->trace_node);
+	list_append(&running_process->tracees, &th->trace_node);
 	return 0;
 }
 
 static sysret trace_getregs(struct thread *th, void *data) {
 	if (!th)
 		return -ESRCH;
-	if (!is_stopped(th))
+	if (!trace_is_stopped(th))
 		return -EINVAL;
 	memcpy(data, th->user_ctx, sizeof(interrupt_frame));
 	return 0;
@@ -40,7 +42,7 @@ static sysret trace_getregs(struct thread *th, void *data) {
 static sysret trace_setregs(struct thread *th, void *data) {
 	if (!th)
 		return -ESRCH;
-	if (!is_stopped(th))
+	if (!trace_is_stopped(th))
 		return -EINVAL;
 	memcpy(th->user_ctx, data, sizeof(interrupt_frame));
 	return 0;
@@ -49,7 +51,7 @@ static sysret trace_setregs(struct thread *th, void *data) {
 static sysret trace_start(struct thread *th, enum trace_state ns, int signal) {
 	if (!th)
 		return -ESRCH;
-	bool should_start = is_stopped(th);
+	bool should_start = trace_is_stopped(th);
 	bool in_signal = th->trace_state == TRACE_SIGNAL_DELIVERY_STOP;
 
 	th->trace_state = ns;
@@ -77,8 +79,7 @@ static sysret trace_start(struct thread *th, enum trace_state ns, int signal) {
 	}
 
 	if (should_start) {
-		th->state = TS_RUNNING;
-		thread_enqueue(th);
+		sched_wake(th);
 	}
 	return 0;
 }
@@ -121,20 +122,17 @@ sysret sys_trace(enum trace_command cmd, pid_t pid, void *addr, void *data) {
 }
 
 static void wake_tracer_with(struct thread *tracee, int value) {
-	struct thread *tracer = tracee->tracer;
+	struct process *tracer = tracee->tracer;
 	if (!tracer)
 		return;
 
 	tracee->trace_report = value;
-	tracee->state = TS_TRWAIT;
-	if (tracer->state == TS_WAIT
-		&& (tracer->wait_request == 0
-			|| tracer->wait_request == running_thread->tid)
-		&& !tracer->wait_trace_result) {
-		tracer->state = TS_RUNNING;
-		tracer->wait_trace_result = running_addr();
-	}
-	signal_send_th(tracee->tracer, SIGCHLD);
+
+	spin_lock(&tracer->wait_lock);
+	wq_wake_all_locked(&tracer->wait_wq);
+	spin_unlock(&tracer->wait_lock);
+
+	signal_send_proc(tracer, SIGCHLD);
 }
 
 void trace_syscall_entry(struct thread *tracee, int syscall) {
@@ -145,7 +143,8 @@ void trace_syscall_entry(struct thread *tracee, int syscall) {
 
 	tracee->trace_state = TRACE_SYSCALL_ENTER_STOP;
 	wake_tracer_with(tracee, report);
-	thread_block();
+
+	sched_block();
 }
 
 void trace_syscall_exit(struct thread *tracee, int syscall) {
@@ -156,7 +155,8 @@ void trace_syscall_exit(struct thread *tracee, int syscall) {
 
 	tracee->trace_state = TRACE_SYSCALL_EXIT_STOP;
 	wake_tracer_with(tracee, report);
-	thread_block();
+
+	sched_block();
 }
 
 int trace_signal_delivery(int signal, sighandler_t handler) {
@@ -167,7 +167,8 @@ int trace_signal_delivery(int signal, sighandler_t handler) {
 
 	tracee->trace_state = TRACE_SIGNAL_DELIVERY_STOP;
 	wake_tracer_with(tracee, report);
-	thread_block();
+
+	sched_block();
 
 	return tracee->trace_signal;
 }
@@ -180,5 +181,6 @@ void trace_report_trap(int interrupt) {
 
 	tracee->trace_state = TRACE_TRAPPED;
 	wake_tracer_with(tracee, report);
-	thread_block();
+
+	sched_block();
 }

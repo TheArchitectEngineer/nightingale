@@ -54,19 +54,25 @@ sysret sys_sigprocmask(int op, const sigset_t *new, sigset_t *old) {
 	if (th->state == TS_RUNNING) {
 		longjmp(th->kernel_ctx, 2);
 	} else {
-		struct thread *next = thread_sched();
-		thread_switch_no_save(next);
+		sched_yield();
 	}
+
+	unreachable();
 }
 
-int signal_send_th(struct thread *th, int signal) {
+void signal_send_th(struct thread *th, int signal) {
 	sigaddset(&th->sig_pending, signal);
-	thread_enqueue(th);
 
-	return 0;
+	sched_notify(th);
 }
 
-int signal_send(pid_t pid, int signal) {
+void signal_send_proc(struct process *p, int signal) {
+	sigaddset(&p->sig_pending, signal);
+
+	sched_notify_proc(p);
+}
+
+int signal_send_pid(pid_t pid, int signal) {
 	if (pid < 0)
 		return -ETODO;
 	if (pid == 0)
@@ -78,10 +84,13 @@ int signal_send(pid_t pid, int signal) {
 	if (th->is_kthread)
 		return -EPERM;
 
-	return signal_send_th(th, signal);
+	signal_send_th(th, signal);
+	return 0;
 }
 
 int signal_send_pgid(pid_t pgid, int signal) {
+	// TODO: shouldn't iterate over all threads / 
+	// some object should own PGID membership
 	list_for_each_safe (&all_threads) {
 		struct thread *th = container_of(struct thread, all_threads, it);
 		struct process *p = th->proc;
@@ -89,31 +98,35 @@ int signal_send_pgid(pid_t pgid, int signal) {
 			continue;
 		if (pgid != p->pgid)
 			continue;
-		signal_send_th(th, signal);
+		signal_send_proc(p, signal);
 	}
 	return 0;
 }
 
 sysret sys_kill(pid_t pid, int sig) {
-	return signal_send(pid, sig);
+	return signal_send_pid(pid, sig);
 }
 
-bool signal_is_actionable(struct thread *th, int signal) {
-	if (sigismember(&th->sig_mask, signal))
-		return false;
-	return sigismember(&th->sig_pending, signal);
+int dequeue_pending_signal(sigset_t *mask, sigset_t *pending) {
+	for (int sig = 1; sig < 32; sig++) {
+		if (sigismember(mask, sig)) continue;
+		if (sigismember(pending, sig)) {
+			sigdelset(pending, sig);
+			return sig;
+		}
+	}
+	return 0;
 }
 
 int handle_pending_signals() {
-	struct thread *th = running_addr();
+	struct thread *th = running_thread;
+	struct process *p = running_process;
 
-	for (int signal = 0; signal < 32; signal++) {
-		if (!signal_is_actionable(th, signal))
-			continue;
-
-		sigdelset(&th->sig_pending, signal);
-		handle_signal(signal, th->sig_handlers[signal]);
-	}
+	int sig;
+	if ((sig = dequeue_pending_signal(&th->sig_mask, &p->sig_pending)))
+		signal_self(sig);
+	if ((sig = dequeue_pending_signal(&th->sig_mask, &th->sig_pending)))
+		signal_self(sig);
 
 	return 0;
 }

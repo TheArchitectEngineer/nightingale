@@ -62,6 +62,11 @@ struct process {
 	int uid;
 	int gid;
 
+	sigset_t sig_pending;
+
+	spinlock_t wait_lock;
+	wq_t wait_wq;
+
 	int exit_intention; // tells threads to exit
 	int exit_status; // tells parent has exited
 
@@ -73,6 +78,7 @@ struct process {
 
 	list children;
 	list threads;
+	list tracees; // threads we're tracing
 
 	list_node siblings;
 
@@ -88,9 +94,7 @@ enum thread_state {
 	TS_STARTED, // initialized, not yet run
 	TS_RUNNING, // able to run
 	TS_BLOCKED, // generically unable to progress, probably a mutex
-	TS_WAIT, // waiting for children to die
 	TS_IOWAIT, // waiting for IO (network)
-	TS_TRWAIT, // waiting for trace(2) parent.
 	TS_SLEEP, // sleeping
 	TS_DEAD,
 };
@@ -126,13 +130,8 @@ struct thread {
 	struct dentry *cwd;
 	struct dentry *proc_dir;
 
-	pid_t wait_request;
-	struct process *wait_result;
-	struct thread *wait_trace_result;
-
-	list tracees;
 	list_node trace_node;
-	struct thread *tracer;
+	struct process *tracer;
 	enum trace_state trace_state;
 	int trace_report;
 	int trace_signal;
@@ -224,5 +223,8 @@ void print_cpu_info();
 
 void sched_wake(struct thread *);
 void sched_block();
+void sched_yield();
+void sched_notify(struct thread *);
+void sched_notify_proc(struct process *);
 
 END_DECLS
