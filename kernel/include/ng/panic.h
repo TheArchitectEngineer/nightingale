@@ -9,7 +9,6 @@ BEGIN_DECLS
 [[noreturn]] void halt();
 
 __NOINLINE void break_point();
-void backtrace_all();
 
 #define panic(...) \
 	do { \

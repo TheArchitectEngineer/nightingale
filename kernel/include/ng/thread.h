@@ -27,8 +27,6 @@ struct cpu {
 
 void new_cpu(int n);
 
-// #define this_cpu ((void)0, (struct cpu __seg_gs *)0)
-// #define this_addr ((void)0, this_cpu->self)
 extern cpu_local struct cpu this_cpu;
 
 // on x86, the floating point context for a process is an opaque
@@ -172,7 +170,7 @@ struct thread {
 #define running_process (running_thread->proc)
 #define thread_idle (cpu_ref(this_cpu).idle)
 static inline struct thread *running_addr() {
-	return cpu_ref(this_cpu).running;
+	return running_thread;
 }
 
 void return_from_interrupt();
