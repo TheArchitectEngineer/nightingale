@@ -1,49 +1,65 @@
 {
-  "version": 3,
-  "configurePresets": [
-    {
-      "name": "clang-base",
-      "hidden": true,
-      "generator": "Ninja",
-      "toolchainFile": "${sourceDir}/toolchain/CMake/CMakeToolchain.txt"
-    },
-    {
-      "name": "clang-debug",
-      "inherits": "clang-base",
-      "binaryDir": "${sourceDir}/build-clang-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "clang-release",
-      "inherits": "clang-base",
-      "binaryDir": "${sourceDir}/build-clang-release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
-    },
-    {
-      "name": "gcc-base",
-      "hidden": true,
-      "generator": "Ninja",
-      "toolchainFile": "${sourceDir}/toolchain/CMake/CMakeToolchain-gcc.txt"
-    },
-    {
-      "name": "gcc-debug",
-      "inherits": "gcc-base",
-      "binaryDir": "${sourceDir}/build-gcc-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "gcc-release",
-      "inherits": "gcc-base",
-      "binaryDir": "${sourceDir}/build-gcc-release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
-	}
-  ]
+	"version": 3,
+	"configurePresets": [
+		{
+			"name": "clang-base",
+			"hidden": true,
+			"generator": "Ninja",
+			"toolchainFile": "${sourceDir}/toolchain/CMake/CMakeToolchain.txt"
+		},
+		{
+			"name": "clang-debug",
+			"inherits": "clang-base",
+			"binaryDir": "${sourceDir}/build-clang-debug",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Debug"
+			}
+		},
+		{
+			"name": "clang-release",
+			"inherits": "clang-base",
+			"binaryDir": "${sourceDir}/build-clang-release",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release"
+			}
+		},
+		{
+			"name": "gcc-base",
+			"hidden": true,
+			"generator": "Ninja",
+			"toolchainFile": "${sourceDir}/toolchain/CMake/CMakeToolchain-gcc.txt"
+		},
+		{
+			"name": "gcc-debug",
+			"inherits": "gcc-base",
+			"binaryDir": "${sourceDir}/build-gcc-debug",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Debug"
+			}
+		},
+		{
+			"name": "gcc-release",
+			"inherits": "gcc-base",
+			"binaryDir": "${sourceDir}/build-gcc-release",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release"
+			}
+		},
+		{
+			"name": "clang-ci",
+			"inherits": "clang-debug",
+			"binaryDir": "${sourceDir}/build-clang-ci",
+			"cacheVariables": {
+				"nightingale_kernel_cmdline": "init=/bin/test"
+			}
+		},
+		{
+			"name": "gcc-ci",
+			"inherits": "gcc-debug",
+			"binaryDir": "${sourceDir}/build-gcc-ci",
+			"cacheVariables": {
+				"nightingale_kernel_cmdline": "init=/bin/test"
+			}
+		}
+	]
 }

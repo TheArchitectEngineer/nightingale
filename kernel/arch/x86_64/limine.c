@@ -149,6 +149,10 @@ void *limine_rsdp() {
 	return rsdp_request.response->address;
 }
 
+char *limine_kernel_command_line() {
+	return cmdline_request.response->cmdline;
+}
+
 void *limine_kernel_file(size_t *len) {
 	if (len)
 		*len = kernel_file_request.response->executable_file->size;

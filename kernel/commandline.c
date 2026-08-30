@@ -1,3 +1,4 @@
+#include <ng/init.h>
 #include <ng/limine.h>
 #include <ng/string.h>
 #include <stdlib.h>
@@ -24,6 +25,7 @@ void init_command_line() {
 	}
 	n_arguments++;
 }
+define_init(init_command_line, 3);
 
 const char *get_kernel_argument(const char *key) {
 	const char *cursor = kernel_command_line;

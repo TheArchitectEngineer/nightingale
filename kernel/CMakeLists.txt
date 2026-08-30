@@ -24,6 +24,7 @@ add_executable(nightingale_kernel
     fs/tmpfs.c
     fs/tty.c
     fs/vnode.c
+	handle_table.c
     irq.c
     main.c
     mman.c
@@ -115,4 +116,3 @@ target_link_options(nightingale_kernel PRIVATE
 )
 
 install(TARGETS nightingale_kernel DESTINATION boot COMPONENT iso)
-install(FILES ${CMAKE_SOURCE_DIR}/kernel/limine.cfg DESTINATION boot COMPONENT iso)

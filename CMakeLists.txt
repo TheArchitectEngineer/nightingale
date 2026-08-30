@@ -18,7 +18,21 @@ set(CMAKE_C_FLAGS_RELEASE "-O3")
 set(nightingale_enable_ubsan ON CACHE BOOL "Enable undefined behavior sanitizer")
 set(nightingale_arch "X86_64" CACHE STRING "Target architecture")
 
-set(limine_cfg_file "${CMAKE_SOURCE_DIR}/kernel/limine.conf")
+set(
+    nightingale_kernel_cmdline
+    ""
+    CACHE STRING
+    "Additional Nightingale kernel command-line arguments"
+)
+
+set(limine_cfg_template "${CMAKE_SOURCE_DIR}/kernel/limine.conf.in")
+set(limine_cfg_file "${CMAKE_BINARY_DIR}/limine.conf")
+
+configure_file(
+    ${limine_cfg_template}
+    ${limine_cfg_file}
+    @ONLY
+)
 
 set(iso_file "${CMAKE_BINARY_DIR}/ngos.iso")
 set(iso_dir "${CMAKE_BINARY_DIR}/iso_root")
